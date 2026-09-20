@@ -1,4 +1,3 @@
-
 """
 services/payment_service.py — обработка платежей.
 Поддерживаемые методы: Telegram Stars, CryptoBot, TON (по комментарию).
@@ -7,14 +6,14 @@ import logging
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
+ 
 from config import SUBSCRIPTION_PRICES, CRYPTOBOT_TOKEN, TON_WALLET, TONCENTER_API_KEY
 from models import Payment, User
 from services.user_service import add_subscription
-
+ 
 log = logging.getLogger(__name__)
-
-
+ 
+ 
 async def create_payment(
     db: AsyncSession,
     user_id: int,
@@ -24,7 +23,7 @@ async def create_payment(
     amount_override: float | None = None,
 ) -> Payment:
     """Создать запись платежа со статусом 'pending'.
-
+ 
     amount_override — для TON передаётся реальная сумма в TON,
     иначе берётся из SUBSCRIPTION_PRICES.
     """
@@ -36,7 +35,7 @@ async def create_payment(
     else:
         amount = price_info["usdt"]
     currency = "XTR" if method == "stars" else ("TON" if method == "ton" else "USDT")
-
+ 
     payment = Payment(
         user_id=user_id,
         method=method,
@@ -50,8 +49,8 @@ async def create_payment(
     await db.commit()
     await db.refresh(payment)
     return payment
-
-
+ 
+ 
 async def confirm_payment(db: AsyncSession, payment: Payment, user: User):
     """
     Подтвердить платёж — добавить подписку пользователю.
@@ -60,17 +59,17 @@ async def confirm_payment(db: AsyncSession, payment: Payment, user: User):
     payment.status = "paid"
     payment.paid_at = datetime.now(timezone.utc)
     await db.commit()
-
+ 
     days = SUBSCRIPTION_PRICES[payment.plan]["days"]
     await add_subscription(db, user, days)
     log.info(
         "Платёж подтверждён: user=%d plan=%s days=%d",
         user.id, payment.plan, days
     )
-
-
+ 
+ 
 # ── CryptoBot ─────────────────────────────────────────────────────────────────
-
+ 
 async def create_cryptobot_invoice(plan: str, user_id: int) -> dict | None:
     """
     Создать инвойс через CryptoBot API.
@@ -103,17 +102,17 @@ async def create_cryptobot_invoice(plan: str, user_id: int) -> dict | None:
     except Exception as e:
         log.error("CryptoBot ошибка: %s", e)
     return None
-
-
+ 
+ 
 # ── Telegram Stars ────────────────────────────────────────────────────────────
-
+ 
 def get_stars_price(plan: str) -> int:
     """Получить цену в Stars для плана."""
     return SUBSCRIPTION_PRICES[plan]["stars"]
-
-
+ 
+ 
 # ── TON ───────────────────────────────────────────────────────────────────────
-
+ 
 async def create_ton_invoice(
     db: AsyncSession,
     user_id: int,
@@ -127,17 +126,17 @@ async def create_ton_invoice(
     if not TON_WALLET:
         log.error("TON_WALLET не настроен в .env")
         return None
-
+ 
     from services.ton_service import usd_to_ton, generate_comment
-
+ 
     usd_amount = SUBSCRIPTION_PRICES[plan]["usdt"]
     result = await usd_to_ton(usd_amount)
     if result is None:
         return None
-
+ 
     ton_amount, rate = result
     comment = generate_comment(user_id)
-
+ 
     payment = await create_payment(
         db,
         user_id=user_id,
@@ -146,7 +145,7 @@ async def create_ton_invoice(
         external_id=comment,
         amount_override=ton_amount,
     )
-
+ 
     log.info(
         "TON-инвойс создан: user=%d plan=%s %.4f TON (rate=%.4f) comment=%s",
         user_id, plan, ton_amount, rate, comment,
@@ -159,8 +158,8 @@ async def create_ton_invoice(
         "wallet":     TON_WALLET,
         "rate":       rate,
     }
-
-
+ 
+ 
 async def get_pending_ton_payments(db: AsyncSession) -> list[Payment]:
     """Все незакрытые TON-платежи."""
     result = await db.execute(
@@ -170,8 +169,8 @@ async def get_pending_ton_payments(db: AsyncSession) -> list[Payment]:
         )
     )
     return list(result.scalars().all())
-
-
+ 
+ 
 async def expire_old_ton_payments(db: AsyncSession) -> int:
     """Помечает как 'expired' TON-платежи старше 1 часа. Возвращает кол-во."""
     cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
@@ -188,3 +187,4 @@ async def expire_old_ton_payments(db: AsyncSession) -> int:
     if payments:
         await db.commit()
     return len(payments)
+
