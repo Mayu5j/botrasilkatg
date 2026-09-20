@@ -1,6 +1,6 @@
 """
 bot/handlers/payment.py — обработка оплаты подписки.
-
+ 
 Способы оплаты:
   1. Telegram Stars — через отдельного платёжного бота (deep-link).
   2. TON (Tonkeeper) — генерируется счёт с уникальным комментарием,
@@ -15,23 +15,23 @@ from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
-
+ 
 from config import SUBSCRIPTION_PRICES, ADMIN_USERNAME
 from models import User
 from services import payment_bot_service
 from services.payment_service import create_ton_invoice
 from bot.keyboards import kb_subscription_plans
-
+ 
 log = logging.getLogger(__name__)
 router = Router()
-
+ 
 IS_MIRROR = False
-
+ 
 PLAN_LABELS = {"1month": "1 месяц", "1week": "1 неделя", "3month": "3 месяца", "6month": "6 месяцев"}
-
-
+ 
+ 
 # ── Меню подписки ─────────────────────────────────────────────────────────────
-
+ 
 @router.message(Command("pay"))
 @router.callback_query(F.data == "pay:menu")
 async def show_pay_menu(event, user: User):
@@ -41,13 +41,13 @@ async def show_pay_menu(event, user: User):
         "Выберите тариф:"
     )
     kb = kb_subscription_plans(is_mirror=IS_MIRROR)
-
+ 
     if isinstance(event, Message):
         await event.answer(text, reply_markup=kb, parse_mode="Markdown")
     else:
         await event.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
-
-
+ 
+ 
 @router.callback_query(F.data.startswith("pay:select:"))
 async def select_plan(query: CallbackQuery, db: AsyncSession):
     """Выбрали тариф → показываем способы оплаты."""
@@ -56,12 +56,12 @@ async def select_plan(query: CallbackQuery, db: AsyncSession):
     if not info:
         await query.answer("Неизвестный тариф.", show_alert=True)
         return
-
+ 
     plan_label = PLAN_LABELS.get(plan, plan)
     active_bot = await payment_bot_service.get_active_bot(db)
-
+ 
     buttons = []
-
+ 
     # Кнопка Stars
     if active_bot and active_bot.bot_username:
         buttons.append([InlineKeyboardButton(
@@ -71,21 +71,21 @@ async def select_plan(query: CallbackQuery, db: AsyncSession):
         stars_note = ""
     else:
         stars_note = "⚠️ Оплата Stars временно недоступна.\n"
-
+ 
     # Кнопка TON
     buttons.append([InlineKeyboardButton(
         text=f"💎 Оплатить TON (~${info['usdt']})",
         callback_data=f"pay:ton:{plan}",
     )])
-
+ 
     # Кнопка администратора
     buttons.append([InlineKeyboardButton(
         text="✉️ Написать администратору",
         callback_data=f"pay:admin:{plan}",
     )])
-
+ 
     buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="pay:menu")])
-
+ 
     text = (
         f"🛒 *{plan_label}*\n\n"
         f"⭐ Telegram Stars: {info['stars']}\n"
@@ -93,16 +93,16 @@ async def select_plan(query: CallbackQuery, db: AsyncSession):
         f"{stars_note}"
         "Выберите способ оплаты:"
     )
-
+ 
     await query.message.answer(
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
         parse_mode="Markdown",
     )
-
-
+ 
+ 
 # ── Оплата TON ────────────────────────────────────────────────────────────────
-
+ 
 @router.callback_query(F.data.startswith("pay:ton:"))
 async def pay_ton(query: CallbackQuery, user: User, db: AsyncSession):
     """Создаём TON-инвойс: генерируем комментарий, показываем реквизиты."""
@@ -111,12 +111,12 @@ async def pay_ton(query: CallbackQuery, user: User, db: AsyncSession):
     if not info:
         await query.answer("Неизвестный тариф.", show_alert=True)
         return
-
+ 
     await query.answer()
     await query.message.answer("⏳ Получаю актуальный курс TON...")
-
+ 
     invoice = await create_ton_invoice(db, user.id, plan)
-
+ 
     if invoice is None:
         await query.message.answer(
             "⚠️ Не удалось создать счёт. Возможно, кошелёк не настроен "
@@ -129,7 +129,7 @@ async def pay_ton(query: CallbackQuery, user: User, db: AsyncSession):
             ]),
         )
         return
-
+ 
     plan_label = PLAN_LABELS.get(plan, plan)
     text = (
         f"💎 *Оплата TON — {plan_label}*\n\n"
@@ -141,7 +141,7 @@ async def pay_ton(query: CallbackQuery, user: User, db: AsyncSession):
         f"Счёт действителен *1 час*. Как только платёж поступит — "
         f"подписка активируется автоматически."
     )
-
+ 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
             text="💎 Открыть в Tonkeeper",
@@ -157,19 +157,19 @@ async def pay_ton(query: CallbackQuery, user: User, db: AsyncSession):
         )],
         [InlineKeyboardButton(text="◀️ Назад", callback_data=f"pay:select:{plan}")],
     ])
-
+ 
     await query.message.answer(text, reply_markup=kb, parse_mode="Markdown")
-
-
+ 
+ 
 # ── Написать администратору ───────────────────────────────────────────────────
-
+ 
 @router.callback_query(F.data.startswith("pay:admin:"))
 async def pay_admin(query: CallbackQuery, user: User):
     """Контакт администратора для ручной оплаты или решения проблем."""
     plan = query.data.split(":")[2]
     plan_label = PLAN_LABELS.get(plan, plan)
     info = SUBSCRIPTION_PRICES.get(plan, {})
-
+ 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
             text="✉️ Написать администратору",
@@ -177,7 +177,7 @@ async def pay_admin(query: CallbackQuery, user: User):
         )],
         [InlineKeyboardButton(text="◀️ Назад", callback_data=f"pay:select:{plan}")],
     ])
-
+ 
     await query.message.answer(
         f"🛒 *Покупка у администратора*\n\n"
         f"Тариф: *{plan_label}*\n"
@@ -189,3 +189,5 @@ async def pay_admin(query: CallbackQuery, user: User):
         reply_markup=kb,
         parse_mode="Markdown",
     )
+ 
+
