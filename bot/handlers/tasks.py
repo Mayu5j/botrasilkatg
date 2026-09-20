@@ -1,6 +1,6 @@
 """
 bot/handlers/tasks.py — создание и управление задачами рассылок.
-
+ 
 ИЗМЕНЕНИЯ (медиа-рефакторинг):
   - Фото больше не хранится как file_id.
   - При создании задачи байты фото скачиваются через Bot API
@@ -9,7 +9,7 @@ bot/handlers/tasks.py — создание и управление задача�
     → кеширует полученный Telethon file_id в TaskMediaCache
     → удаляет строки из TaskMedia.
   - При повторных отправках воркер использует кеш (без байт).
-
+ 
 ИЗМЕНЕНИЯ (обход ограничений чата при создании задачи):
   - Часть чатов отсеивается ещё на этапе ЛЁГКОЙ проверки (account_service.
     check_and_join_chats — GetParticipantRequest без реальной отправки).
@@ -34,10 +34,10 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Any
-
+ 
 from telethon.errors import FloodWaitError
 from telethon.tl import types as tl_types
-
+ 
 from database import SessionLocal
 from models import User, TaskMedia, TaskAccount, Account, Log
 from services import task_service, account_service
@@ -46,23 +46,23 @@ from bot.keyboards import (
     kb_cancel, kb_back_to_menu, kb_confirm_chats,
     kb_choose_sender, kb_access_error,
 )
-
+ 
 log = logging.getLogger(__name__)
 router = Router()
-
-
+ 
+ 
 # ── FSM ───────────────────────────────────────────────────────────────────────
-
+ 
 class CreateTask(StatesGroup):
     name     = State()
     message  = State()
     interval = State()
     chats    = State()
     sender   = State()
-
-
+ 
+ 
 # ── Отмена — ПЕРВОЙ в роутере ─────────────────────────────────────────────────
-
+ 
 @router.callback_query(F.data == "menu")
 async def cb_cancel_to_menu(query: CallbackQuery, state: FSMContext, user: User):
     current = await state.get_state()
@@ -74,25 +74,25 @@ async def cb_cancel_to_menu(query: CallbackQuery, state: FSMContext, user: User)
         reply_markup=kb_main_menu(user.has_access),
         parse_mode="HTML",
     )
-
-
+ 
+ 
 # ── Утилиты ───────────────────────────────────────────────────────────────────
-
+ 
 def _normalize_chat_id(raw: str) -> str:
     s = raw.strip()
     if s.startswith("@"):
         return f"@{s.lstrip('@')}"
     return s
-
-
+ 
+ 
 def _chat_display_from_task_chat(c) -> str:
     ct = c.chat_title or ""
     if ct.startswith("@"):
         uname = ct.lstrip("@")
         return f'<a href="https://t.me/{uname}">{html.escape(ct)}</a>'
     return html.escape(ct) if ct else html.escape(c.chat_id)
-
-
+ 
+ 
 async def _download_photo_bytes(bot, file_id: str) -> bytes | None:
     """
     Скачать фото через Bot API и вернуть сырые байты.
@@ -106,26 +106,26 @@ async def _download_photo_bytes(bot, file_id: str) -> bytes | None:
     except Exception as e:
         log.error("Не удалось скачать фото file_id=%s: %s", file_id[:20], e)
         return None
-
-
+ 
+ 
 # ── Список задач ──────────────────────────────────────────────────────────────
-
+ 
 @router.message(Command("tasks"))
 async def cmd_tasks(message: Message, state: FSMContext, user: User, db: AsyncSession):
     await state.clear()
     tasks = await task_service.get_tasks(db, user.id)
     text = "📋 <b>Ваши задачи</b>" if tasks else "📋 У вас пока нет задач."
     await message.answer(text, reply_markup=kb_tasks(tasks), parse_mode="HTML")
-
-
+ 
+ 
 @router.callback_query(F.data == "tasks:list")
 async def cb_tasks_list(query: CallbackQuery, state: FSMContext, user: User, db: AsyncSession):
     await state.clear()
     tasks = await task_service.get_tasks(db, user.id)
     text = "📋 <b>Ваши задачи</b>" if tasks else "📋 У вас пока нет задач."
     await query.message.answer(text, reply_markup=kb_tasks(tasks), parse_mode="HTML")
-
-
+ 
+ 
 @router.callback_query(F.data.startswith("tasks:view:"))
 async def view_task(query: CallbackQuery, state: FSMContext, user: User, db: AsyncSession):
     await state.clear()
@@ -134,9 +134,9 @@ async def view_task(query: CallbackQuery, state: FSMContext, user: User, db: Asy
     if not task:
         await query.answer("Задача не найдена.", show_alert=True)
         return
-
+ 
     icon = "▶️" if task.is_active else "⏸"
-
+ 
     chats_lines = []
     for c in task.chats[:15]:
         display = _chat_display_from_task_chat(c)
@@ -145,7 +145,7 @@ async def view_task(query: CallbackQuery, state: FSMContext, user: User, db: Asy
     chats_block = "\n".join(chats_lines) if chats_lines else "—"
     if len(task.chats) > 15:
         chats_block += f"\n…и ещё {len(task.chats) - 15}"
-
+ 
     acc_lines = []
     for link in task.accounts:
         try:
@@ -157,10 +157,10 @@ async def view_task(query: CallbackQuery, state: FSMContext, user: User, db: Asy
         if acc and acc.is_system:
             acc_name += " (system)"
         acc_lines.append(f"• {html.escape(acc_name)}: {len(ids)} чатов")
-
+ 
     accounts_block = "\n".join(acc_lines) if acc_lines else "—"
     media_note = " 📷" if task.has_media else ""
-
+ 
     text = (
         f"{icon} <b>{html.escape(task.name)}</b>{media_note}\n\n"
         f"💬 Сообщение:\n<i>{html.escape(task.message[:200])}</i>\n\n"
@@ -170,15 +170,15 @@ async def view_task(query: CallbackQuery, state: FSMContext, user: User, db: Asy
         f"🏷 <b>Чаты рассылки:</b>\n{chats_block}\n\n"
         f"👤 <b>Распределение:</b>\n{accounts_block}"
     )
-
+ 
     await query.message.answer(
         text,
         reply_markup=kb_task_detail(task),
         parse_mode="HTML",
         disable_web_page_preview=True,
     )
-
-
+ 
+ 
 @router.callback_query(F.data.startswith("tasks:toggle:"))
 async def toggle_task(query: CallbackQuery, state: FSMContext, user: User, db: AsyncSession):
     await state.clear()
@@ -204,11 +204,11 @@ async def toggle_task(query: CallbackQuery, state: FSMContext, user: User, db: A
         await query.message.answer(
             text, reply_markup=kb_task_detail(task), parse_mode="HTML"
         )
-
-
+ 
+ 
 TASK_LOGS_PER_PAGE = 20
-
-
+ 
+ 
 def _make_message_link(chat_id: str, message_id: int | None) -> str | None:
     if not message_id:
         return None
@@ -220,8 +220,8 @@ def _make_message_link(chat_id: str, message_id: int | None) -> str | None:
         if raw.startswith("-100"):
             return f"https://t.me/c/{raw[4:]}/{message_id}"
     return None
-
-
+ 
+ 
 @router.callback_query(F.data.startswith("tasks:stats:"))
 async def task_stats(query: CallbackQuery, user: User, db: AsyncSession):
     from sqlalchemy import func
@@ -230,12 +230,12 @@ async def task_stats(query: CallbackQuery, user: User, db: AsyncSession):
     if not task:
         await query.answer("Задача не найдена.", show_alert=True)
         return
-
+ 
     total_res = await db.execute(
         select(func.count(Log.id)).where(Log.task_id == task_id, Log.success == True)
     )
     total_sent: int = total_res.scalar() or 0
-
+ 
     linkable_res = await db.execute(
         select(func.count(Log.id)).where(
             Log.task_id == task_id,
@@ -244,7 +244,7 @@ async def task_stats(query: CallbackQuery, user: User, db: AsyncSession):
         )
     )
     linkable: int = linkable_res.scalar() or 0
-
+ 
     icon   = "▶️" if task.is_active else "⏸"
     text   = (
         f"{icon} <b>{html.escape(task.name)}</b>\n\n"
@@ -256,7 +256,7 @@ async def task_stats(query: CallbackQuery, user: User, db: AsyncSession):
         text += "Нажмите кнопку ниже чтобы просмотреть ссылки на каждое сообщение."
     else:
         text += "Ссылки появятся после следующих отправок."
-
+ 
     if linkable > 0:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔗 Посмотреть ссылки", callback_data=f"tasks:logs:{task_id}:0")],
@@ -266,24 +266,24 @@ async def task_stats(query: CallbackQuery, user: User, db: AsyncSession):
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="◀️ К задаче", callback_data=f"tasks:view:{task_id}")],
         ])
-
+ 
     await query.message.answer(text, reply_markup=kb, parse_mode="HTML")
-
-
+ 
+ 
 @router.callback_query(F.data.startswith("tasks:logs:"))
 async def task_logs_page(query: CallbackQuery, user: User, db: AsyncSession):
     from sqlalchemy import func
     from bot.keyboards import kb_task_logs_page
-
+ 
     parts   = query.data.split(":")   # tasks:logs:TASK_ID:PAGE
     task_id = int(parts[2])
     page    = int(parts[3]) if len(parts) > 3 else 0
-
+ 
     task = await task_service.get_task(db, task_id, user.id)
     if not task:
         await query.answer("Задача не найдена.", show_alert=True)
         return
-
+ 
     count_res = await db.execute(
         select(func.count(Log.id)).where(
             Log.task_id == task_id,
@@ -294,7 +294,7 @@ async def task_logs_page(query: CallbackQuery, user: User, db: AsyncSession):
     linkable: int = count_res.scalar() or 0
     total_pages   = max(1, -(-linkable // TASK_LOGS_PER_PAGE))
     page          = max(0, min(page, total_pages - 1))
-
+ 
     logs_res = await db.execute(
         select(Log)
         .where(Log.task_id == task_id, Log.success == True, Log.message_id.isnot(None))
@@ -311,24 +311,24 @@ async def task_logs_page(query: CallbackQuery, user: User, db: AsyncSession):
             lines.append(f'{i}. <a href="{link}">{html.escape(lg.chat_id)}</a> — {ts}')
         else:
             lines.append(f'{i}. {html.escape(lg.chat_id)} — {ts}')
-
+ 
     if not lines:
         lines = ["(нет отправок с публичной ссылкой)"]
-
+ 
     text = (
         f"🔗 <b>Сообщения задачи</b> «{html.escape(task.name)}»\n"
         f"Стр. {page + 1} / {total_pages} · {linkable} ссылок\n\n"
         + "\n".join(lines)
     )
-
+ 
     await query.message.answer(
         text,
         reply_markup=kb_task_logs_page(task_id, page, total_pages),
         parse_mode="HTML",
         disable_web_page_preview=True,
     )
-
-
+ 
+ 
 @router.callback_query(F.data.startswith("tasks:delete:"))
 async def ask_delete_task(query: CallbackQuery, state: FSMContext, user: User, db: AsyncSession):
     await state.clear()
@@ -342,8 +342,8 @@ async def ask_delete_task(query: CallbackQuery, state: FSMContext, user: User, d
         reply_markup=kb_task_delete_confirm(task_id),
         parse_mode="HTML",
     )
-
-
+ 
+ 
 @router.callback_query(F.data.startswith("tasks:confirm_delete:"))
 async def confirm_delete_task(query: CallbackQuery, state: FSMContext, user: User, db: AsyncSession):
     await state.clear()
@@ -353,10 +353,10 @@ async def confirm_delete_task(query: CallbackQuery, state: FSMContext, user: Use
     tasks = await task_service.get_tasks(db, user.id)
     text  = "📋 <b>Ваши задачи</b>" if tasks else "📋 У вас пока нет задач."
     await query.message.answer(text, reply_markup=kb_tasks(tasks), parse_mode="HTML")
-
-
+ 
+ 
 # ── Создание задачи (FSM) ─────────────────────────────────────────────────────
-
+ 
 @router.callback_query(F.data == "tasks:new")
 async def cb_new_task(query: CallbackQuery, state: FSMContext, user: User):
     await state.clear()
@@ -371,8 +371,8 @@ async def cb_new_task(query: CallbackQuery, state: FSMContext, user: User):
         parse_mode="HTML",
     )
     await state.set_state(CreateTask.name)
-
-
+ 
+ 
 @router.message(Command("newtask"))
 async def cmd_new_task(message: Message, state: FSMContext, user: User):
     await state.clear()
@@ -386,8 +386,8 @@ async def cmd_new_task(message: Message, state: FSMContext, user: User):
         parse_mode="HTML",
     )
     await state.set_state(CreateTask.name)
-
-
+ 
+ 
 @router.message(CreateTask.name)
 async def got_task_name(message: Message, state: FSMContext):
     await state.update_data(name=message.text.strip())
@@ -399,8 +399,8 @@ async def got_task_name(message: Message, state: FSMContext):
         parse_mode="HTML",
     )
     await state.set_state(CreateTask.message)
-
-
+ 
+ 
 @router.message(CreateTask.message)
 async def got_task_message(message: Message, state: FSMContext):
     """
@@ -409,7 +409,7 @@ async def got_task_message(message: Message, state: FSMContext):
     В БД байты попадут только при финальном создании задачи (confirm_chats).
     """
     text, entities_json = _extract_text_and_entities(message)
-
+ 
     # ── Одиночное фото ─────────────────────────────────────────────────────
     if message.photo and not message.media_group_id:
         photo_bytes = await _download_photo_bytes(message.bot, message.photo[-1].file_id)
@@ -429,7 +429,7 @@ async def got_task_message(message: Message, state: FSMContext):
         )
         await state.set_state(CreateTask.interval)
         return
-
+ 
     # ── Медиагруппа ────────────────────────────────────────────────────────
     media_group_id = getattr(message, "media_group_id", None)
     if media_group_id:
@@ -437,7 +437,7 @@ async def got_task_message(message: Message, state: FSMContext):
         mg = data.get("media_group", {"id": media_group_id, "photos_b64": [], "text": "", "entities": []})
         if mg.get("id") != media_group_id:
             mg = {"id": media_group_id, "photos_b64": [], "text": "", "entities": []}
-
+ 
         if message.photo:
             if len(mg["photos_b64"]) < 5:
                 photo_bytes = await _download_photo_bytes(message.bot, message.photo[-1].file_id)
@@ -446,7 +446,7 @@ async def got_task_message(message: Message, state: FSMContext):
         if text:
             mg["text"]     = text
             mg["entities"] = entities_json
-
+ 
         await state.update_data(media_group=mg)
         await message.answer(
             f"📸 Принял фото: {len(mg['photos_b64'])}/5. "
@@ -454,7 +454,7 @@ async def got_task_message(message: Message, state: FSMContext):
             parse_mode="HTML",
         )
         return
-
+ 
     # ── "ок" после медиагруппы ──────────────────────────────────────────────
     data = await state.get_data()
     mg   = data.get("media_group")
@@ -478,12 +478,12 @@ async def got_task_message(message: Message, state: FSMContext):
         )
         await state.set_state(CreateTask.interval)
         return
-
+ 
     # ── Только текст ────────────────────────────────────────────────────────
     if not text:
         await message.answer("❌ Пришлите текст или фото (до 5 штук) с подписью.")
         return
-
+ 
     await state.update_data(
         message=text,
         format_entities=entities_json,
@@ -498,8 +498,8 @@ async def got_task_message(message: Message, state: FSMContext):
         parse_mode="HTML",
     )
     await state.set_state(CreateTask.interval)
-
-
+ 
+ 
 @router.message(CreateTask.interval)
 async def got_task_interval(message: Message, state: FSMContext):
     text = message.text.strip()
@@ -516,16 +516,16 @@ async def got_task_interval(message: Message, state: FSMContext):
         parse_mode="HTML",
     )
     await state.set_state(CreateTask.chats)
-
-
+ 
+ 
 @router.message(CreateTask.chats)
 async def got_task_chats(message: Message, state: FSMContext, user: User, db: AsyncSession):
     raw   = message.text.strip()
     chats = []
-
+ 
     if raw.startswith("https://t.me/addlist/"):
         await message.answer("🔍 Получаю список чатов из папки...")
-
+ 
         accounts = await account_service.get_accounts(db, owner_id=user.id)
         if not accounts:
             accounts = await account_service.get_accounts(db)
@@ -535,7 +535,7 @@ async def got_task_chats(message: Message, state: FSMContext, user: User, db: As
                 "Добавьте аккаунт через /accounts или обратитесь к администратору."
             )
             return
-
+ 
         client = account_service.make_client(accounts[0])
         try:
             await client.connect()
@@ -553,7 +553,7 @@ async def got_task_chats(message: Message, state: FSMContext, user: User, db: As
                 await client.disconnect()
             except Exception:
                 pass
-
+ 
         if not chats:
             await message.answer(
                 "❌ Папка пустая или недоступна.\n\n"
@@ -562,7 +562,7 @@ async def got_task_chats(message: Message, state: FSMContext, user: User, db: As
                 parse_mode="HTML",
             )
             return
-
+ 
     else:
         for line in raw.splitlines():
             line = line.strip()
@@ -577,7 +577,7 @@ async def got_task_chats(message: Message, state: FSMContext, user: User, db: As
             else:
                 username = line.lstrip("@")
                 chat_id  = f"@{username}"
-
+ 
             chats.append({
                 "id":          chat_id,
                 "title":       f"@{username}" if username else chat_id,
@@ -585,16 +585,16 @@ async def got_task_chats(message: Message, state: FSMContext, user: User, db: As
                 "access_hash": None,
                 "folder_slug": None,
             })
-
+ 
     if not chats:
         await message.answer("❌ Не нашёл чатов. Попробуйте снова:")
         return
-
+ 
     if len(chats) > user.max_chats:
         chats = chats[:user.max_chats]
-
+ 
     await state.update_data(chats=chats)
-
+ 
     preview_lines = []
     for c in chats[:10]:
         uname = c.get("username")
@@ -603,9 +603,9 @@ async def got_task_chats(message: Message, state: FSMContext, user: User, db: As
     preview = "\n".join(preview_lines)
     if len(chats) > 10:
         preview += f"\n...и ещё {len(chats) - 10}"
-
+ 
     accounts = await account_service.get_accounts(db, owner_id=user.id)
-
+ 
     await message.answer(
         f"✅ Найдено чатов: <b>{len(chats)}</b>\n\n"
         f"{preview}\n\n"
@@ -614,12 +614,12 @@ async def got_task_chats(message: Message, state: FSMContext, user: User, db: As
         parse_mode="HTML",
     )
     await state.set_state(CreateTask.sender)
-
-
+ 
+ 
 @router.callback_query(CreateTask.sender, F.data.startswith("tasks:sender:"))
 async def got_sender_choice(query: CallbackQuery, state: FSMContext, user: User, db: AsyncSession):
     choice = query.data
-
+ 
     if choice == "tasks:sender:system":
         await state.update_data(sender_account_id=None)
         sender_text = "🤖 Системные аккаунты"
@@ -628,11 +628,11 @@ async def got_sender_choice(query: CallbackQuery, state: FSMContext, user: User,
         await state.update_data(sender_account_id=account_id)
         acc         = await account_service.get_account_by_id(db, account_id)
         sender_text = f"👤 {acc.phone}" if acc else "👤 Выбранный аккаунт"
-
+ 
     data  = await state.get_data()
     chats = data.get("chats", [])
     has_photo = bool(data.get("photo_bytes_b64"))
-
+ 
     await query.message.answer(
         f"✅ Отправитель: <b>{html.escape(sender_text)}</b>\n\n"
         f"📋 Задача: <b>{html.escape(data['name'])}</b>\n"
@@ -643,8 +643,8 @@ async def got_sender_choice(query: CallbackQuery, state: FSMContext, user: User,
         reply_markup=kb_confirm_chats(),
         parse_mode="HTML",
     )
-
-
+ 
+ 
 def _to_telethon_entities(entities_json: list[dict]) -> list:
     out = []
     for e in entities_json or []:
@@ -675,12 +675,12 @@ def _to_telethon_entities(entities_json: list[dict]) -> list:
         except Exception:
             pass
     return out
-
-
+ 
+ 
 def _is_real_message(msg) -> bool:
     return bool(msg) and not isinstance(msg, tl_types.MessageEmpty)
-
-
+ 
+ 
 async def _resolve_check_entity(client, chat: dict):
     username = chat.get("username")
     chat_id = str(chat.get("id"))
@@ -700,8 +700,8 @@ async def _resolve_check_entity(client, chat: dict):
         if numeric > 0:
             return await client.get_entity(int(f"-100{numeric}"))
     return await client.get_entity(chat_id)
-
-
+ 
+ 
 async def _send_and_confirm_check_message(
     client,
     chat: dict,
@@ -711,12 +711,12 @@ async def _send_and_confirm_check_message(
     entities = _to_telethon_entities(entities_json)
     last_reason = "message_deleted_after_send"
     last_message_id: int | None = None
-
+ 
     try:
         entity = await _resolve_check_entity(client, chat)
     except Exception as e:
         return False, f"entity_not_found: {str(e)[:80]}", None, None
-
+ 
     for attempt in range(1, 4):
         try:
             sent = await client.send_message(
@@ -728,14 +728,14 @@ async def _send_and_confirm_check_message(
             if not last_message_id:
                 last_reason = "message_id_missing"
                 continue
-
+ 
             msg = await client.get_messages(entity, ids=last_message_id)
             if not _is_real_message(msg):
                 last_reason = "message_not_found_after_send"
                 continue
-
+ 
             await asyncio.sleep(5)
-
+ 
             msg = await client.get_messages(entity, ids=last_message_id)
             if not _is_real_message(msg):
                 last_reason = "message_deleted_after_send"
@@ -744,7 +744,7 @@ async def _send_and_confirm_check_message(
                     chat.get("id"), attempt,
                 )
                 continue
-
+ 
             link = _make_message_link(str(chat.get("id")), last_message_id)
             return True, "ok", last_message_id, link
         except FloodWaitError as e:
@@ -753,10 +753,10 @@ async def _send_and_confirm_check_message(
             await asyncio.sleep(wait)
         except Exception as e:
             last_reason = str(e)[:120]
-
+ 
     return False, last_reason, last_message_id, None
-
-
+ 
+ 
 async def _verify_chats_by_real_message(
     client,
     chats: list[dict],
@@ -765,7 +765,7 @@ async def _verify_chats_by_real_message(
 ) -> tuple[list[dict], list[dict]]:
     verified: list[dict] = []
     failed: list[dict] = []
-
+ 
     for chat in chats:
         ok, reason, message_id, link = await _send_and_confirm_check_message(
             client, chat, message_text, entities_json
@@ -779,40 +779,40 @@ async def _verify_chats_by_real_message(
         else:
             item["can_write"] = False
             failed.append(item)
-
+ 
     return verified, failed
-
-
+ 
+ 
 async def _join_secondary_accounts(task_id: int, primary_account_id: int, final_chats: list[dict]):
     """Join assigned chats for every system account except the one that already checked access."""
     chat_map = {_normalize_chat_id(str(c["id"])): c for c in final_chats}
-
+ 
     async with SessionLocal() as db:
         result = await db.execute(
             select(TaskAccount).where(TaskAccount.task_id == task_id)
         )
         task_accounts = list(result.scalars().all())
-
+ 
     for ta in task_accounts:
         if ta.account_id == primary_account_id:
             continue
-
+ 
         try:
             chat_ids = json.loads(ta.chat_ids or "[]")
         except Exception:
             continue
-
+ 
         ta_chats = [chat_map[cid] for cid in chat_ids if cid in chat_map]
         if not ta_chats:
             continue
-
+ 
         async with SessionLocal() as db:
             result = await db.execute(select(Account).where(Account.id == ta.account_id))
             acc = result.scalar_one_or_none()
-
+ 
         if not acc:
             continue
-
+ 
         client2 = account_service.make_client(acc)
         try:
             await client2.connect()
@@ -825,8 +825,8 @@ async def _join_secondary_accounts(task_id: int, primary_account_id: int, final_
                 await client2.disconnect()
             except Exception:
                 pass
-
-
+ 
+ 
 @router.callback_query(F.data == "tasks:confirm_chats")
 async def confirm_chats(query: CallbackQuery, state: FSMContext, user: User, db: AsyncSession):
     data  = await state.get_data()
@@ -834,9 +834,9 @@ async def confirm_chats(query: CallbackQuery, state: FSMContext, user: User, db:
     if not chats:
         await query.answer("❌ Чаты не найдены.", show_alert=True)
         return
-
+ 
     sender_account_id = data.get("sender_account_id")
-
+ 
     check_account = None
     if sender_account_id is not None:
         check_account = await account_service.get_account_by_id(db, sender_account_id)
@@ -848,7 +848,7 @@ async def confirm_chats(query: CallbackQuery, state: FSMContext, user: User, db:
             accounts = await account_service.get_accounts(db, owner_id=user.id)
             if accounts:
                 check_account = accounts[0]
-
+ 
     if check_account is None:
         await state.clear()
         await query.message.answer(
@@ -856,7 +856,7 @@ async def confirm_chats(query: CallbackQuery, state: FSMContext, user: User, db:
             reply_markup=kb_back_to_menu(),
         )
         return
-
+ 
     from_folder = any(c.get("folder_slug") for c in chats)
     if from_folder:
         await query.message.answer(
@@ -868,16 +868,16 @@ async def confirm_chats(query: CallbackQuery, state: FSMContext, user: User, db:
             f"🔍 Проверяю доступ к {len(chats)} чатам...\n"
             f"Это может занять несколько минут.",
         )
-
+ 
     client = account_service.make_client(check_account)
     try:
         await client.connect()
         await client.get_dialogs()
         results = await account_service.check_and_join_chats(client, chats)
-
+ 
         accessible   = [r for r in results if r["can_write"]]
         inaccessible = [r for r in results if not r["can_write"]]
-
+ 
         # ── Обход ограничений для чатов, которые ЛЁГКАЯ проверка сочла недоступными ──
         # Это самый частый случай капчи/квиза: GetParticipantRequest ещё до всякой
         # реальной отправки говорит "нельзя писать" (Telegram буквально не пускает,
@@ -886,10 +886,10 @@ async def confirm_chats(query: CallbackQuery, state: FSMContext, user: User, db:
         # ту же лёгкую проверку доступа именно для этих чатов.
         if inaccessible:
             from services.restriction_service import try_bypass_restriction
-
+ 
             still_inaccessible: list[dict] = []
             recovered_originals: list[dict] = []
-
+ 
             for r in inaccessible:
                 bypassed = await try_bypass_restriction(check_account, str(r["id"]))
                 if bypassed:
@@ -900,7 +900,7 @@ async def confirm_chats(query: CallbackQuery, state: FSMContext, user: User, db:
                         recovered_originals.append(original)
                         continue
                 still_inaccessible.append(r)
-
+ 
             if recovered_originals:
                 recheck_results = await account_service.check_and_join_chats(
                     client, recovered_originals
@@ -910,9 +910,9 @@ async def confirm_chats(query: CallbackQuery, state: FSMContext, user: User, db:
                         accessible.append(rr)
                     else:
                         still_inaccessible.append(rr)
-
+ 
             inaccessible = still_inaccessible
-
+ 
         def _fmt_chat(r: dict) -> str:
             uname = r.get("username")
             title = r.get("title") or (f"@{uname}" if uname else "—")
@@ -920,7 +920,7 @@ async def confirm_chats(query: CallbackQuery, state: FSMContext, user: User, db:
             if link:
                 return f'<a href="{link}">{html.escape(title)}</a>'
             return html.escape(title)
-
+ 
         if not accessible:
             await state.clear()
             lines = []
@@ -934,26 +934,26 @@ async def confirm_chats(query: CallbackQuery, state: FSMContext, user: User, db:
                 disable_web_page_preview=True,
             )
             return
-
+ 
         await query.message.answer(
             f"📨 Отправляю проверочное сообщение в {len(accessible)} чатов и жду 5 секунд, "
             f"чтобы убедиться, что оно осталось в чате..."
         )
-
+ 
         verified, live_failed = await _verify_chats_by_real_message(
             client,
             accessible,
             data.get("message", ""),
             data.get("format_entities", []),
         )
-
+ 
         # ── Обход ограничений для чатов, где проверочное сообщение не удержалось ──
         # Пробуем тем же аккаунтом, который проверял доступ: решить капчу/квиз
         # от бота-админа в ЛС и/или вступить в требуемые каналы, затем ещё раз
         # реально проверить доставку в эти же чаты.
         if live_failed:
             from services.restriction_service import try_bypass_restriction
-
+ 
             recovered_chats, still_failed = [], []
             for r in live_failed:
                 bypassed = await try_bypass_restriction(check_account, str(r["id"]))
@@ -961,7 +961,7 @@ async def confirm_chats(query: CallbackQuery, state: FSMContext, user: User, db:
                     recovered_chats.append(r)
                 else:
                     still_failed.append(r)
-
+ 
             if recovered_chats:
                 re_verified, re_failed = await _verify_chats_by_real_message(
                     client,
@@ -971,11 +971,11 @@ async def confirm_chats(query: CallbackQuery, state: FSMContext, user: User, db:
                 )
                 verified.extend(re_verified)
                 still_failed.extend(re_failed)
-
+ 
             live_failed = still_failed
-
+ 
         inaccessible.extend(live_failed)
-
+ 
     except Exception as e:
         log.error("Ошибка при проверке чатов: %s", e)
         await query.message.answer(
@@ -990,7 +990,7 @@ async def confirm_chats(query: CallbackQuery, state: FSMContext, user: User, db:
             await client.disconnect()
         except Exception:
             pass
-
+ 
     if not verified:
         await state.clear()
         lines = []
@@ -1005,18 +1005,18 @@ async def confirm_chats(query: CallbackQuery, state: FSMContext, user: User, db:
             disable_web_page_preview=True,
         )
         return
-
+ 
     final_chats = [
         {"id": r["id"], "title": r.get("title", ""), "username": r.get("username")}
         for r in verified
     ]
-
+ 
     # ── Собираем байты фото из FSM ────────────────────────────────────────────
     photos_b64: list[str] = data.get("photo_bytes_b64", [])
     photos_bytes: list[bytes] = [_unb64(b) for b in photos_b64 if b]
-
+ 
     await state.clear()
-
+ 
     task = await task_service.create_task(
         db, user,
         name=data["name"],
@@ -1027,17 +1027,17 @@ async def confirm_chats(query: CallbackQuery, state: FSMContext, user: User, db:
         format_entities=data.get("format_entities", []),
         photo_bytes_list=photos_bytes,   # <-- передаём байты напрямую
     )
-
+ 
     if not task:
         await query.message.answer(
             "❌ Не удалось создать задачу. Возможно превышен лимит чатов.",
             reply_markup=kb_back_to_menu(),
         )
         return
-
+ 
     # Задачу назначаем на тот же аккаунт, который реально отправил
     # и подтвердил проверочные сообщения перед созданием.
-
+ 
     if inaccessible:
         lines = []
         for r in inaccessible[:20]:
@@ -1056,13 +1056,13 @@ async def confirm_chats(query: CallbackQuery, state: FSMContext, user: User, db:
             disable_web_page_preview=True,
         )
         return
-
+ 
     preview_lines = [f"• {_fmt_chat(r)}" for r in verified[:10]]
     if len(verified) > 10:
         preview_lines.append(f"…и ещё {len(verified) - 10}")
-
+ 
     media_note = " 📷 фото сохранено" if photos_bytes else ""
-
+ 
     await query.message.answer(
         f"✅ <b>Задача создана!</b>{media_note}\n\n"
         f"📋 {html.escape(task['name'])}\n"
@@ -1075,19 +1075,19 @@ async def confirm_chats(query: CallbackQuery, state: FSMContext, user: User, db:
     )
     log.info("Создана задача %d для user %d (фото: %d)", task["id"], user.id, len(photos_bytes))
 # ── Вспомогательные функции ───────────────────────────────────────────────────
-
+ 
 import base64
-
+ 
 def _b64(data: bytes) -> str:
     """bytes → base64-строка для хранения в FSM."""
     return base64.b64encode(data).decode()
-
-
+ 
+ 
 def _unb64(s: str) -> bytes:
     """base64-строка → bytes."""
     return base64.b64decode(s)
-
-
+ 
+ 
 def _entities_to_json(entities) -> list[dict[str, Any]]:
     if not entities:
         return []
@@ -1099,14 +1099,14 @@ def _entities_to_json(entities) -> list[dict[str, Any]]:
             d["url"] = url
         out.append(d)
     return out
-
-
+ 
+ 
 def _extract_text_and_entities(msg: Message) -> tuple[str, list[dict[str, Any]]]:
     if msg.caption is not None:
         return msg.caption, _entities_to_json(msg.caption_entities)
     return msg.text or "", _entities_to_json(msg.entities)
-
-
+ 
+ 
 def _reason_label(reason: str) -> str:
     labels = {
         "private":              "приватный чат",
@@ -1133,3 +1133,4 @@ def _reason_label(reason: str) -> str:
     if "banned" in reason_low:
         return "аккаунт заблокирован"
     return labels.get(reason, reason)
+
